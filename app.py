@@ -4,21 +4,77 @@ import torchvision.transforms as transforms
 from torchvision import models
 import torch.nn.functional as F
 from PIL import Image
+import time  # IMPORTANTE: Agregamos time para la pantalla de carga
 
 # ==========================================
-# 1. CONFIGURACIÓN Y PANEL LATERAL (UI/UX)
+# 1. CONFIGURACIÓN INICIAL (Debe ir primero)
 # ==========================================
 st.set_page_config(
-    page_title="PlantDoc | Pipeline Inferencia", 
+    page_title="PlantDoc | Castiel Analytics", 
     page_icon="🍃", 
     layout="wide",
     initial_sidebar_state="expanded"
 )
 
-# Panel Lateral de Control con las Métricas del Documento ABP
+# ==========================================
+# 2. PANTALLA DE PRESENTACIÓN (SPLASH SCREEN)
+# ==========================================
+# Verificamos si es la primera vez que se carga la página
+if 'mostrar_presentacion' not in st.session_state:
+    st.session_state.mostrar_presentacion = True
+
+# Si es la primera vez, mostramos la presentación
+if st.session_state.mostrar_presentacion:
+    st.markdown("<br><br>", unsafe_allow_html=True)
+    st.markdown("<h1 style='text-align: center; color: #2e7d32; font-size: 3.5em;'>🍃 Castiel Analytics Presenta</h1>", unsafe_allow_html=True)
+    st.markdown("<h2 style='text-align: center; color: #444;'>PlantDoc: Clasificación Inteligente de Patologías Vegetales</h2>", unsafe_allow_html=True)
+    st.markdown("<h5 style='text-align: center; color: #666; font-style: italic;'>a través del entrenamiento de Redes Neuronales Convolucionales y técnicas de visión artificial</h5>", unsafe_allow_html=True)
+    st.markdown("<hr style='width: 60%; margin: auto;'>", unsafe_allow_html=True)
+    st.markdown("<br>", unsafe_allow_html=True)
+    
+    st.markdown("<h3 style='text-align: center; color: #333;'>Instituto Superior Politécnico Córdoba (ISPC)</h3>", unsafe_allow_html=True)
+    st.markdown("<h4 style='text-align: center; color: #555;'>Proyecto ABP - Procesamiento de Imágenes y Modelos de IA</h4>", unsafe_allow_html=True)
+    
+    st.markdown("<br>", unsafe_allow_html=True)
+    
+    # Centramos la lista de integrantes
+    col1, col2, col3 = st.columns([1, 2, 1])
+    with col2:
+        st.info("**👨‍💻 Equipo de Desarrollo:**\n"
+                "- Cáceres Giménez, Cesia Fiorella\n"
+                "- Di Campli, Gastón\n"
+                "- Lorenzati, Valentino\n"
+                "- Menón, Nicolas\n"
+                "- Terreno, Alejo\n"
+                "- Virinni, Marco")
+        
+    st.markdown("<br><br>", unsafe_allow_html=True)
+    
+    # Animación de la barra de carga (Dura aprox. 3 segundos)
+    barra_progreso = st.progress(0)
+    texto_estado = st.empty()
+    
+    for i in range(100):
+        time.sleep(0.03)  
+        barra_progreso.progress(i + 1)
+        texto_estado.markdown(f"<p style='text-align: center; color: #666; font-family: monospace;'>Cargando módulos de Castiel Analytics... {i+1}%</p>", unsafe_allow_html=True)
+        
+    time.sleep(0.5)
+    
+    # Cambiamos el estado y recargamos la app para entrar al sistema
+    st.session_state.mostrar_presentacion = False
+    st.rerun()
+    st.stop()  # Evita que el resto del código se ejecute mientras se muestra la presentación
+
+
+# ==========================================
+# 3. PANEL LATERAL (UI/UX) - APLICACIÓN PRINCIPAL
+# ==========================================
+# A partir de aquí, el código es el tuyo original, funcionando a la perfección.
+
 with st.sidebar:
     st.title("🍃 PlantDoc OS")
-    st.caption("Panel de Control de Producción")
+    st.caption("Panel de Control | **Castiel Analytics**")
     st.markdown("---")
     
     st.markdown("### 📊 Métricas de Validación (ResNet-50)")
@@ -36,7 +92,7 @@ st.markdown("Carga una muestra foliar para ejecutar la inferencia paralela de lo
 st.divider()
 
 # ==========================================
-# 2. LAS 39 CLASES ORIGINALES DEL DATASET
+# 4. LAS 39 CLASES ORIGINALES DEL DATASET
 # ==========================================
 CLASES_DATASET = [
     'Apple___Apple_scab', 'Apple___Black_rot', 'Apple___Cedar_apple_rust', 'Apple___healthy',
@@ -54,7 +110,7 @@ CLASES_DATASET = [
 ]
 
 # ==========================================
-# 3. CARGA DEL MODELO RESNET-50 (Cerebro de Valentino)
+# 5. CARGA DEL MODELO RESNET-50
 # ==========================================
 @st.cache_resource
 def cargar_resnet():
@@ -94,7 +150,7 @@ def predecir_resnet(imagen):
     return resultados
 
 # ==========================================
-# 4. INTERFAZ VISUAL: LAYOUT ESTILO GRADIO
+# 6. INTERFAZ VISUAL: LAYOUT ESTILO GRADIO
 # ==========================================
 # Mitad izquierda para Entrada, Mitad derecha para las Salidas de ambos modelos
 col_izq, col_der = st.columns([1, 1.2], gap="large")
@@ -133,13 +189,12 @@ with col_der:
                 # Obtenemos las probabilidades reales mediante Softmax
                 predicciones = predecir_resnet(imagen)
                 
-                # Construimos el contenedor HTML sin indentaciones para evitar conflictos con Markdown
+                # Construimos el contenedor HTML
                 html_barras = "<div style='border: 1px solid #ddd; border-radius: 8px; padding: 15px; background-color: white; display: flex; flex-direction: column; gap: 10px;'>"
                 
                 for i, (clase, conf) in enumerate(predicciones):
                     pct = int(conf * 100)
                     
-                    # Lógica de colores del gr.Label original de Gradio
                     if i == 0:
                         color_barra = "#22c55e" if "healthy" in clase.lower() else "#f97316"
                         grosor_fuente = "bold"
@@ -147,12 +202,10 @@ with col_der:
                         color_barra = "#e5e7eb"
                         grosor_fuente = "normal"
                     
-                    # Formateo de los nombres técnicos de las carpetas
                     nombre_limpio = clase.replace('___', ' - ').replace('_', ' ')
                     
-                    # Agregamos filas al componente HTML en bloques lineales estrictos
                     html_barras += f"<div style='display: flex; align-items: center; justify-content: space-between; border: 1px solid #eee; border-radius: 6px; padding: 6px 12px; background: #fafafa;'>"
-                    html_barras += f"<div style='flex: 1; font-family: sans-serif; font-size: 13px; font-weight: {grosor_fuente}; color: #333; text-transform: capitalize;'>{nombre_clase_limpio if 'nombre_clase_limpio' in locals() else nombre_limpio}</div>"
+                    html_barras += f"<div style='flex: 1; font-family: sans-serif; font-size: 13px; font-weight: {grosor_fuente}; color: #333; text-transform: capitalize;'>{nombre_limpio}</div>"
                     html_barras += f"<div style='flex: 1.5; margin: 0 10px; background: #e5e7eb; border-radius: 4px; height: 18px; overflow: hidden;'>"
                     html_barras += f"<div style='background: {color_barra}; width: {pct}%; height: 100%; transition: width 0.5s;'></div></div>"
                     html_barras += f"<div style='min-width: 40px; text-align: right; font-family: monospace; font-size: 14px; color: #555; font-weight: {grosor_fuente};'>{pct}%</div>"
@@ -160,5 +213,6 @@ with col_der:
                     
                 html_barras += "</div>"
                 
-                # Forzamos la renderización del HTML nativo
                 st.markdown(html_barras, unsafe_allow_html=True)
+
+                # Sub-columnas para simular la vista side-by-side de Gradio
