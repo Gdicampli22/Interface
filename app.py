@@ -26,7 +26,7 @@ if 'mostrar_presentacion' not in st.session_state:
 # Si es la primera vez, mostramos la presentación
 if st.session_state.mostrar_presentacion:
     st.markdown("<br><br>", unsafe_allow_html=True)
-    st.markdown("<h1 style='text-align: center; color: #2e7d32; font-size: 3.5em;'>🍃 Castiel Analytics Presenta</h1>", unsafe_allow_html=True)
+    st.markdown("<h1 style='text-align: center; color: #2e7d32; font-size: 3.5em;'>🍃 Castiel Analytics</h1>", unsafe_allow_html=True)
     st.markdown("<h2 style='text-align: center; color: #444;'>PlantDoc: Clasificación Inteligente de Patologías Vegetales</h2>", unsafe_allow_html=True)
     st.markdown("<h5 style='text-align: center; color: #666; font-style: italic;'>a través del entrenamiento de Redes Neuronales Convolucionales y técnicas de visión artificial</h5>", unsafe_allow_html=True)
     st.markdown("<hr style='width: 60%; margin: auto;'>", unsafe_allow_html=True)
