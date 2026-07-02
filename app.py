@@ -7,6 +7,44 @@ from PIL import Image
 import time  
 import google.generativeai as genai 
 import os
+import sqlite3
+import pandas as pd
+from datetime import datetime
+
+# ==========================================
+# 0. CONFIGURACIÓN DE BASE DE DATOS (SQLite)
+# ==========================================
+def init_db():
+    """Inicializa la base de datos y crea la tabla si no existe."""
+    conn = sqlite3.connect("plantdoc_stats.db")
+    cursor = conn.cursor()
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS predicciones (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            fecha TEXT,
+            patologia TEXT,
+            confianza REAL,
+            modelo_usado TEXT
+        )
+    ''')
+    conn.commit()
+    conn.close()
+
+def guardar_estadistica(patologia, confianza):
+    """Guarda un nuevo registro en la base de datos."""
+    conn = sqlite3.connect("plantdoc_stats.db")
+    cursor = conn.cursor()
+    fecha_actual = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    cursor.execute('''
+        INSERT INTO predicciones (fecha, patologia, confianza, modelo_usado)
+        VALUES (?, ?, ?, ?)
+    ''', (fecha_actual, patologia, confianza, "ResNet-50"))
+    conn.commit()
+    conn.close()
+
+# Inicializamos la DB al arrancar la app
+init_db()
+
 
 # ==========================================
 # 1. CONFIGURACIÓN INICIAL Y LLM (Seguro)
@@ -210,6 +248,11 @@ with col_der:
                 st.markdown("**2️⃣ Salida ResNet-50 (Clasificación)**")
                 predicciones = predecir_resnet(imagen)
                 
+                # GUARDAMOS LA ESTADÍSTICA EN LA BASE DE DATOS
+                clase_top, conf_top = predicciones[0]
+                nombre_limpio_top = clase_top.replace('___', ' - ').replace('_', ' ')
+                guardar_estadistica(nombre_limpio_top, round(conf_top * 100, 2))
+                
                 html_barras = "<div style='border: 1px solid #ddd; border-radius: 8px; padding: 15px; background-color: white; display: flex; flex-direction: column; gap: 10px;'>"
                 
                 for i, (clase, conf) in enumerate(predicciones):
@@ -240,9 +283,6 @@ with col_der:
         # ==========================================
         st.markdown("<br>", unsafe_allow_html=True)
         
-        clase_top, conf_top = predicciones[0]
-        nombre_limpio_top = clase_top.replace('___', ' - ').replace('_', ' ')
-        
         if "healthy" not in clase_top.lower():
             st.markdown(f"**🔍 Asistente Fitosanitario (IA Generativa)**")
             if st.button(f"💊 Consultar tratamiento para {nombre_limpio_top}", width='stretch'):
@@ -251,3 +291,28 @@ with col_der:
                     st.info(recomendacion, icon="💡")
         else:
             st.success(f"La IA indica que es una hoja sana. ¡Sigue así con los cuidados básicos!", icon="🌿")
+
+
+# ==========================================
+# 8. SECCIÓN DE ESTADÍSTICAS (VISUALIZACIÓN DB)
+# ==========================================
+st.markdown("---")
+st.markdown("### 🗄️ Historial de Diagnósticos")
+
+# Usamos un expander para mantener la interfaz limpia
+with st.expander("Ver registros en la base de datos local", expanded=False):
+    try:
+        conn = sqlite3.connect("plantdoc_stats.db")
+        # Leemos la tabla usando pandas para mostrarla elegante en Streamlit
+        df_stats = pd.read_sql_query(
+            "SELECT fecha as Fecha, patologia as Patología, confianza as 'Confianza (%)', modelo_usado as Modelo FROM predicciones ORDER BY id DESC", 
+            conn
+        )
+        conn.close()
+        
+        if not df_stats.empty:
+            st.dataframe(df_stats, hide_index=True)
+        else:
+            st.info("La base de datos está vacía. Realiza tu primera inferencia para registrarla.")
+    except Exception as e:
+        st.error(f"No se pudo cargar la base de datos: {e}")
