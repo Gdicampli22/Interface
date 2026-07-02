@@ -4,11 +4,16 @@ import torchvision.transforms as transforms
 from torchvision import models
 import torch.nn.functional as F
 from PIL import Image
-import time  # IMPORTANTE: Agregamos time para la pantalla de carga
+import time  
+import google.generativeai as genai 
+import os
 
 # ==========================================
-# 1. CONFIGURACIÓN INICIAL (Debe ir primero)
+# 1. CONFIGURACIÓN INICIAL Y LLM
 # ==========================================
+# Configuración de Gemini API (Reemplaza con tu clave)
+genai.configure(api_key="AIzaSyA0DE_XGoG40nirAz5_ydqTVwhnfb8FC3M")
+
 st.set_page_config(
     page_title="PlantDoc | Castiel Analytics", 
     page_icon="🍃", 
@@ -70,8 +75,6 @@ if st.session_state.mostrar_presentacion:
 # ==========================================
 # 3. PANEL LATERAL (UI/UX) - APLICACIÓN PRINCIPAL
 # ==========================================
-# A partir de aquí, el código es el tuyo original, funcionando a la perfección.
-
 with st.sidebar:
     st.title("🍃 PlantDoc OS")
     st.caption("Panel de Control | **Castiel Analytics**")
@@ -110,7 +113,7 @@ CLASES_DATASET = [
 ]
 
 # ==========================================
-# 5. CARGA DEL MODELO RESNET-50
+# 5. CARGA DEL MODELO RESNET Y GEMINI
 # ==========================================
 @st.cache_resource
 def cargar_resnet():
@@ -149,8 +152,26 @@ def predecir_resnet(imagen):
         resultados.append((CLASES_DATASET[idx], conf))
     return resultados
 
+def obtener_tratamiento_gemini(enfermedad):
+    """Consulta a la API de Gemini para obtener tips de tratamiento."""
+    try:
+        modelo_llm = genai.GenerativeModel('gemini-2.5-flash')
+        prompt = f"""
+        Eres un experto ingeniero agrónomo y fitosanitario. 
+        Nuestro sistema de IA acaba de detectar la siguiente condición en una planta: '{enfermedad}'.
+        
+        Por favor, responde de forma estructurada y breve (máximo 3 párrafos cortos):
+        1. Una brevísima descripción de la enfermedad.
+        2. Dos o tres tips prácticos para tratarla o mitigarla de inmediato.
+        No uses saludos, ve directo al grano.
+        """
+        respuesta = modelo_llm.generate_content(prompt)
+        return respuesta.text
+    except Exception as e:
+        return f"Hubo un error al consultar el LLM: {str(e)}"
+
 # ==========================================
-# 6. INTERFAZ VISUAL: LAYOUT ESTILO GRADIO
+# 6. INTERFAZ VISUAL Y PIPELINE
 # ==========================================
 # Mitad izquierda para Entrada, Mitad derecha para las Salidas de ambos modelos
 col_izq, col_der = st.columns([1, 1.2], gap="large")
@@ -162,7 +183,8 @@ with col_izq:
     if archivo_subido is not None:
         imagen = Image.open(archivo_subido).convert('RGB')
         st.markdown("<div style='border: 2px dashed #ccc; padding: 10px; border-radius: 10px;'>", unsafe_allow_html=True)
-        st.image(imagen, use_container_width=True)
+        # CORRECCIÓN DE LA ADVERTENCIA: usamos width='stretch'
+        st.image(imagen, width='stretch')
         st.markdown("</div>", unsafe_allow_html=True)
 
 with col_der:
@@ -178,7 +200,8 @@ with col_der:
             with mod1:
                 st.markdown("**1️⃣ Salida YOLOv8 (Detección de Hoja)**")
                 st.markdown("<div style='border: 1px solid #ddd; padding: 10px; border-radius: 8px; background-color: #fafafa;'>", unsafe_allow_html=True)
-                st.image(imagen, use_container_width=True) 
+                # CORRECCIÓN DE LA ADVERTENCIA: usamos width='stretch'
+                st.image(imagen, width='stretch') 
                 st.markdown("</div>", unsafe_allow_html=True)
                 st.success("ROI extraído correctamente.")
             
@@ -214,5 +237,23 @@ with col_der:
                 html_barras += "</div>"
                 
                 st.markdown(html_barras, unsafe_allow_html=True)
-
-                # Sub-columnas para simular la vista side-by-side de Gradio
+                
+        # ==========================================
+        # 7. MÓDULO LLM: CONSULTA DE TRATAMIENTO
+        # ==========================================
+        st.markdown("<br>", unsafe_allow_html=True)
+        
+        # Tomamos la predicción top 1 (índice 0)
+        clase_top, conf_top = predicciones[0]
+        nombre_limpio_top = clase_top.replace('___', ' - ').replace('_', ' ')
+        
+        # Solo sugerimos tratamiento si la confianza es alta y NO es una planta sana
+        if "healthy" not in clase_top.lower():
+            st.markdown(f"**🔍 Asistente Fitosanitario (IA Generativa)**")
+            # CORRECCIÓN DE LA ADVERTENCIA: usamos width='stretch'
+            if st.button(f"💊 Consultar tratamiento para {nombre_limpio_top}", width='stretch'):
+                with st.spinner("Consultando recomendaciones a Gemini..."):
+                    recomendacion = obtener_tratamiento_gemini(nombre_limpio_top)
+                    st.info(recomendacion, icon="💡")
+        else:
+            st.success(f"La IA indica que es una hoja sana. ¡Sigue así con los cuidados básicos!", icon="🌿")
