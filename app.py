@@ -9,11 +9,8 @@ import google.generativeai as genai
 import os
 
 # ==========================================
-# 1. CONFIGURACIÓN INICIAL Y LLM
+# 1. CONFIGURACIÓN INICIAL Y LLM (Seguro)
 # ==========================================
-# Configuración de Gemini API (Reemplaza con tu clave)
-genai.configure(api_key="AIzaSyA0DE_XGoG40nirAz5_ydqTVwhnfb8FC3M")
-
 st.set_page_config(
     page_title="PlantDoc | Castiel Analytics", 
     page_icon="🍃", 
@@ -21,14 +18,26 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
+# Captura de API Key segura sin exponerla en el código
+api_key = os.environ.get("GEMINI_API_KEY")
+if not api_key:
+    try:
+        api_key = st.secrets["GEMINI_API_KEY"]
+    except (FileNotFoundError, KeyError):
+        api_key = None
+
+if api_key:
+    genai.configure(api_key=api_key)
+else:
+    st.sidebar.warning("⚠️ API Key de Gemini no detectada. La consulta de tratamientos está deshabilitada.")
+
+
 # ==========================================
 # 2. PANTALLA DE PRESENTACIÓN (SPLASH SCREEN)
 # ==========================================
-# Verificamos si es la primera vez que se carga la página
 if 'mostrar_presentacion' not in st.session_state:
     st.session_state.mostrar_presentacion = True
 
-# Si es la primera vez, mostramos la presentación
 if st.session_state.mostrar_presentacion:
     st.markdown("<br><br>", unsafe_allow_html=True)
     st.markdown("<h1 style='text-align: center; color: #2e7d32; font-size: 3.5em;'>🍃 Castiel Analytics</h1>", unsafe_allow_html=True)
@@ -42,7 +51,6 @@ if st.session_state.mostrar_presentacion:
     
     st.markdown("<br>", unsafe_allow_html=True)
     
-    # Centramos la lista de integrantes
     col1, col2, col3 = st.columns([1, 2, 1])
     with col2:
         st.info("**👨‍💻 Equipo de Desarrollo:**\n"
@@ -55,7 +63,6 @@ if st.session_state.mostrar_presentacion:
         
     st.markdown("<br><br>", unsafe_allow_html=True)
     
-    # Animación de la barra de carga (Dura aprox. 3 segundos)
     barra_progreso = st.progress(0)
     texto_estado = st.empty()
     
@@ -66,14 +73,13 @@ if st.session_state.mostrar_presentacion:
         
     time.sleep(0.5)
     
-    # Cambiamos el estado y recargamos la app para entrar al sistema
     st.session_state.mostrar_presentacion = False
     st.rerun()
-    st.stop()  # Evita que el resto del código se ejecute mientras se muestra la presentación
+    st.stop()
 
 
 # ==========================================
-# 3. PANEL LATERAL (UI/UX) - APLICACIÓN PRINCIPAL
+# 3. PANEL LATERAL (UI/UX)
 # ==========================================
 with st.sidebar:
     st.title("🍃 PlantDoc OS")
@@ -89,14 +95,14 @@ with st.sidebar:
     st.info("💡 **Pipeline de Inferencia:**\n1. Extracción de ROI (YOLOv8)\n2. Clasificación de Tensores (ResNet-50)")
     st.caption("© 2026 Proyecto ABP - ISPC")
 
-# Encabezado Principal
+
+# ==========================================
+# 4. CLASES DEL DATASET
+# ==========================================
 st.title("Análisis Fitosanitario Automatizado")
 st.markdown("Carga una muestra foliar para ejecutar la inferencia paralela de los modelos YOLOv8 y ResNet-50.")
 st.divider()
 
-# ==========================================
-# 4. LAS 39 CLASES ORIGINALES DEL DATASET
-# ==========================================
 CLASES_DATASET = [
     'Apple___Apple_scab', 'Apple___Black_rot', 'Apple___Cedar_apple_rust', 'Apple___healthy',
     'Blueberry___healthy', 'Cherry_(including_sour)___Powdery_mildew', 'Cherry_(including_sour)___healthy',
@@ -112,6 +118,7 @@ CLASES_DATASET = [
     'Tomato___Tomato_Yellow_Leaf_Curl_Virus', 'Tomato___Tomato_mosaic_virus', 'Tomato___healthy', 'background'
 ]
 
+
 # ==========================================
 # 5. CARGA DEL MODELO RESNET Y GEMINI
 # ==========================================
@@ -119,7 +126,6 @@ CLASES_DATASET = [
 def cargar_resnet():
     modelo = models.resnet50(weights=None)
     num_ftrs = modelo.fc.in_features
-    # Replicamos exactamente la arquitectura secuencial con la que fue entrenado en Colab
     modelo.fc = torch.nn.Sequential(
         torch.nn.Dropout(0.5),
         torch.nn.Linear(num_ftrs, 39)
@@ -142,7 +148,6 @@ def predecir_resnet(imagen):
     with torch.no_grad():
         salida = modelo_resnet(img_transformada)
         probabilidades = F.softmax(salida, dim=1)[0]
-        # Extraemos las 3 probabilidades más altas (Top 3)
         top_prob, top_clases = torch.topk(probabilidades, 3)
         
     resultados = []
@@ -153,7 +158,8 @@ def predecir_resnet(imagen):
     return resultados
 
 def obtener_tratamiento_gemini(enfermedad):
-    """Consulta a la API de Gemini para obtener tips de tratamiento."""
+    if not api_key:
+        return "⚠️ Error: La API Key de Gemini no está configurada."
     try:
         modelo_llm = genai.GenerativeModel('gemini-2.5-flash')
         prompt = f"""
@@ -170,10 +176,10 @@ def obtener_tratamiento_gemini(enfermedad):
     except Exception as e:
         return f"Hubo un error al consultar el LLM: {str(e)}"
 
+
 # ==========================================
 # 6. INTERFAZ VISUAL Y PIPELINE
 # ==========================================
-# Mitad izquierda para Entrada, Mitad derecha para las Salidas de ambos modelos
 col_izq, col_der = st.columns([1, 1.2], gap="large")
 
 with col_izq:
@@ -183,7 +189,6 @@ with col_izq:
     if archivo_subido is not None:
         imagen = Image.open(archivo_subido).convert('RGB')
         st.markdown("<div style='border: 2px dashed #ccc; padding: 10px; border-radius: 10px;'>", unsafe_allow_html=True)
-        # CORRECCIÓN DE LA ADVERTENCIA: usamos width='stretch'
         st.image(imagen, width='stretch')
         st.markdown("</div>", unsafe_allow_html=True)
 
@@ -192,27 +197,19 @@ with col_der:
         st.markdown("### ⚙️ Salida de los Modelos")
         
         with st.spinner("Procesando Tensores..."):
-            
-            # Sub-columnas para simular la vista side-by-side de Gradio
             mod1, mod2 = st.columns(2)
             
-            # --- MODELO 1: YOLOv8 ---
             with mod1:
                 st.markdown("**1️⃣ Salida YOLOv8 (Detección de Hoja)**")
                 st.markdown("<div style='border: 1px solid #ddd; padding: 10px; border-radius: 8px; background-color: #fafafa;'>", unsafe_allow_html=True)
-                # CORRECCIÓN DE LA ADVERTENCIA: usamos width='stretch'
                 st.image(imagen, width='stretch') 
                 st.markdown("</div>", unsafe_allow_html=True)
                 st.success("ROI extraído correctamente.")
             
-            # --- MODELO 2: ResNet-50 (Barras de Confianza) ---
             with mod2:
                 st.markdown("**2️⃣ Salida ResNet-50 (Clasificación)**")
-                
-                # Obtenemos las probabilidades reales mediante Softmax
                 predicciones = predecir_resnet(imagen)
                 
-                # Construimos el contenedor HTML
                 html_barras = "<div style='border: 1px solid #ddd; border-radius: 8px; padding: 15px; background-color: white; display: flex; flex-direction: column; gap: 10px;'>"
                 
                 for i, (clase, conf) in enumerate(predicciones):
@@ -243,14 +240,11 @@ with col_der:
         # ==========================================
         st.markdown("<br>", unsafe_allow_html=True)
         
-        # Tomamos la predicción top 1 (índice 0)
         clase_top, conf_top = predicciones[0]
         nombre_limpio_top = clase_top.replace('___', ' - ').replace('_', ' ')
         
-        # Solo sugerimos tratamiento si la confianza es alta y NO es una planta sana
         if "healthy" not in clase_top.lower():
             st.markdown(f"**🔍 Asistente Fitosanitario (IA Generativa)**")
-            # CORRECCIÓN DE LA ADVERTENCIA: usamos width='stretch'
             if st.button(f"💊 Consultar tratamiento para {nombre_limpio_top}", width='stretch'):
                 with st.spinner("Consultando recomendaciones a Gemini..."):
                     recomendacion = obtener_tratamiento_gemini(nombre_limpio_top)
