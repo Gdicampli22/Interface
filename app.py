@@ -6,6 +6,7 @@ import torch.nn.functional as F
 from PIL import Image
 import time  
 import google.generativeai as genai 
+from groq import Groq
 import os
 import sqlite3
 import pandas as pd
@@ -15,7 +16,6 @@ from datetime import datetime
 # 0. CONFIGURACIÓN DE BASE DE DATOS (SQLite)
 # ==========================================
 def init_db():
-    """Inicializa la base de datos y crea la tabla si no existe."""
     conn = sqlite3.connect("plantdoc_stats.db")
     cursor = conn.cursor()
     cursor.execute('''
@@ -24,30 +24,30 @@ def init_db():
             fecha TEXT,
             patologia TEXT,
             confianza REAL,
-            modelo_usado TEXT
+            modelo_usado TEXT,
+            tratamiento TEXT
         )
     ''')
     conn.commit()
     conn.close()
 
-def guardar_estadistica(patologia, confianza):
-    """Guarda un nuevo registro en la base de datos."""
+def guardar_estadistica(patologia, confianza, tratamiento, motor_llm):
     conn = sqlite3.connect("plantdoc_stats.db")
     cursor = conn.cursor()
     fecha_actual = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    modelo_final = f"ResNet-50 + {motor_llm}"
     cursor.execute('''
-        INSERT INTO predicciones (fecha, patologia, confianza, modelo_usado)
-        VALUES (?, ?, ?, ?)
-    ''', (fecha_actual, patologia, confianza, "ResNet-50"))
+        INSERT INTO predicciones (fecha, patologia, confianza, modelo_usado, tratamiento)
+        VALUES (?, ?, ?, ?, ?)
+    ''', (fecha_actual, patologia, confianza, modelo_final, tratamiento))
     conn.commit()
     conn.close()
 
-# Inicializamos la DB al arrancar la app
 init_db()
 
 
 # ==========================================
-# 1. CONFIGURACIÓN INICIAL Y LLM (Seguro)
+# 1. CONFIGURACIÓN INICIAL Y LLMs (Seguro)
 # ==========================================
 st.set_page_config(
     page_title="PlantDoc | Castiel Analytics", 
@@ -56,18 +56,26 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Captura de API Key segura sin exponerla en el código
-api_key = os.environ.get("GEMINI_API_KEY")
-if not api_key:
+# Captura de API Key segura para Gemini
+gemini_api_key = os.environ.get("GEMINI_API_KEY")
+if not gemini_api_key:
     try:
-        api_key = st.secrets["GEMINI_API_KEY"]
+        gemini_api_key = st.secrets["GEMINI_API_KEY"]
     except (FileNotFoundError, KeyError):
-        api_key = None
+        gemini_api_key = None
 
-if api_key:
-    genai.configure(api_key=api_key)
-else:
-    st.sidebar.warning("⚠️ API Key de Gemini no detectada. La consulta de tratamientos está deshabilitada.")
+if gemini_api_key:
+    genai.configure(api_key=gemini_api_key)
+
+# Captura de API Key segura para Groq
+groq_api_key = os.environ.get("GROQ_API_KEY")
+if not groq_api_key:
+    try:
+        groq_api_key = st.secrets["GROQ_API_KEY"]
+    except (FileNotFoundError, KeyError):
+        groq_api_key = None
+
+groq_client = Groq(api_key=groq_api_key) if groq_api_key else None
 
 
 # ==========================================
@@ -133,6 +141,19 @@ with st.sidebar:
     st.info("💡 **Pipeline de Inferencia:**\n1. Extracción de ROI (YOLOv8)\n2. Clasificación de Tensores (ResNet-50)")
     st.caption("© 2026 Proyecto ABP - ISPC")
 
+    # Alertas de estado de las APIs
+    st.markdown("---")
+    st.markdown("### 🔌 Estado de Conexiones")
+    if gemini_api_key:
+        st.success("Gemini API: Conectada", icon="✅")
+    else:
+        st.error("Gemini API: Desconectada", icon="❌")
+        
+    if groq_api_key:
+        st.success("Groq API: Conectada", icon="✅")
+    else:
+        st.error("Groq API: Desconectada", icon="❌")
+
 
 # ==========================================
 # 4. CLASES DEL DATASET
@@ -158,7 +179,7 @@ CLASES_DATASET = [
 
 
 # ==========================================
-# 5. CARGA DEL MODELO RESNET Y GEMINI
+# 5. CARGA DEL MODELO RESNET Y FUNCIÓN UNIFICADA LLM
 # ==========================================
 @st.cache_resource
 def cargar_resnet():
@@ -195,24 +216,40 @@ def predecir_resnet(imagen):
         resultados.append((CLASES_DATASET[idx], conf))
     return resultados
 
-def obtener_tratamiento_gemini(enfermedad):
-    if not api_key:
-        return "⚠️ Error: La API Key de Gemini no está configurada."
-    try:
-        modelo_llm = genai.GenerativeModel('gemini-2.5-flash')
-        prompt = f"""
-        Eres un experto ingeniero agrónomo y fitosanitario. 
-        Nuestro sistema de IA acaba de detectar la siguiente condición en una planta: '{enfermedad}'.
-        
-        Por favor, responde de forma estructurada y breve (máximo 3 párrafos cortos):
-        1. Una brevísima descripción de la enfermedad.
-        2. Dos o tres tips prácticos para tratarla o mitigarla de inmediato.
-        No uses saludos, ve directo al grano.
-        """
-        respuesta = modelo_llm.generate_content(prompt)
-        return respuesta.text
-    except Exception as e:
-        return f"Hubo un error al consultar el LLM: {str(e)}"
+def obtener_tratamiento(enfermedad, proveedor):
+    """Función unificada que rutea la petición al LLM seleccionado."""
+    prompt = f"""
+    Eres un experto ingeniero agrónomo y fitosanitario. 
+    Nuestro sistema de IA acaba de detectar la siguiente condición en una planta: '{enfermedad}'.
+    
+    Por favor, responde de forma estructurada y breve (máximo 3 párrafos cortos):
+    1. Una brevísima descripción de la enfermedad.
+    2. Dos o tres tips prácticos para tratarla o mitigarla de inmediato.
+    No uses saludos, ve directo al grano. Responde en español.
+    """
+    
+    if proveedor == "Gemini (Google)":
+        if not gemini_api_key:
+            return "⚠️ Error: La API Key de Gemini no está configurada."
+        try:
+            modelo_llm = genai.GenerativeModel('gemini-2.5-flash')
+            respuesta = modelo_llm.generate_content(prompt)
+            return respuesta.text
+        except Exception as e:
+            return f"Hubo un error con Gemini: {str(e)}"
+            
+    elif proveedor == "Groq (Llama 3)":
+        if not groq_client:
+            return "⚠️ Error: La API Key de Groq no está configurada."
+        try:
+            chat_completion = groq_client.chat.completions.create(
+                messages=[{"role": "user", "content": prompt}],
+                model="llama-3.3-70b-versatile", # <--- MODELO ACTUALIZADO
+                temperature=0.3,
+            )
+            return chat_completion.choices[0].message.content
+        except Exception as e:
+            return f"Hubo un error con Groq: {str(e)}"
 
 
 # ==========================================
@@ -248,10 +285,8 @@ with col_der:
                 st.markdown("**2️⃣ Salida ResNet-50 (Clasificación)**")
                 predicciones = predecir_resnet(imagen)
                 
-                # GUARDAMOS LA ESTADÍSTICA EN LA BASE DE DATOS
                 clase_top, conf_top = predicciones[0]
                 nombre_limpio_top = clase_top.replace('___', ' - ').replace('_', ' ')
-                guardar_estadistica(nombre_limpio_top, round(conf_top * 100, 2))
                 
                 html_barras = "<div style='border: 1px solid #ddd; border-radius: 8px; padding: 15px; background-color: white; display: flex; flex-direction: column; gap: 10px;'>"
                 
@@ -285,10 +320,23 @@ with col_der:
         
         if "healthy" not in clase_top.lower():
             st.markdown(f"**🔍 Asistente Fitosanitario (IA Generativa)**")
+            
+            # Selector de Motor de IA
+            proveedor_seleccionado = st.selectbox(
+                "Selecciona el motor de procesamiento LLM:", 
+                ["Groq (Llama 3)", "Gemini (Google)"]
+            )
+            
             if st.button(f"💊 Consultar tratamiento para {nombre_limpio_top}", width='stretch'):
-                with st.spinner("Consultando recomendaciones a Gemini..."):
-                    recomendacion = obtener_tratamiento_gemini(nombre_limpio_top)
+                with st.spinner(f"Consultando recomendaciones a {proveedor_seleccionado}..."):
+                    # 1. Obtenemos la recomendación del LLM seleccionado
+                    recomendacion = obtener_tratamiento(nombre_limpio_top, proveedor_seleccionado)
+                    
+                    # 2. Mostramos el resultado en pantalla
                     st.info(recomendacion, icon="💡")
+                    
+                    # 3. Guardamos el registro en la base de datos con la info de qué API se usó
+                    guardar_estadistica(nombre_limpio_top, round(conf_top * 100, 2), recomendacion, proveedor_seleccionado)
         else:
             st.success(f"La IA indica que es una hoja sana. ¡Sigue así con los cuidados básicos!", icon="🌿")
 
@@ -297,15 +345,13 @@ with col_der:
 # 8. SECCIÓN DE ESTADÍSTICAS (VISUALIZACIÓN DB)
 # ==========================================
 st.markdown("---")
-st.markdown("### 🗄️ Historial de Diagnósticos")
+st.markdown("### 🗄️ Historial de Diagnósticos y Tratamientos")
 
-# Usamos un expander para mantener la interfaz limpia
 with st.expander("Ver registros en la base de datos local", expanded=False):
     try:
         conn = sqlite3.connect("plantdoc_stats.db")
-        # Leemos la tabla usando pandas para mostrarla elegante en Streamlit
         df_stats = pd.read_sql_query(
-            "SELECT fecha as Fecha, patologia as Patología, confianza as 'Confianza (%)', modelo_usado as Modelo FROM predicciones ORDER BY id DESC", 
+            "SELECT fecha as Fecha, patologia as Patología, confianza as 'Confianza (%)', modelo_usado as Modelo, tratamiento as Tratamiento FROM predicciones ORDER BY id DESC", 
             conn
         )
         conn.close()
@@ -313,6 +359,6 @@ with st.expander("Ver registros en la base de datos local", expanded=False):
         if not df_stats.empty:
             st.dataframe(df_stats, hide_index=True)
         else:
-            st.info("La base de datos está vacía. Realiza tu primera inferencia para registrarla.")
+            st.info("La base de datos está vacía. Consulta un tratamiento para registrar tu primer diagnóstico.")
     except Exception as e:
         st.error(f"No se pudo cargar la base de datos: {e}")
